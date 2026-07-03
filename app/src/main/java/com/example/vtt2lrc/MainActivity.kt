@@ -99,6 +99,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun restorePersistedFolder() {
+        val savedUri = prefs.getString(PREF_TREE_URI, null) ?: return
+        val uri = Uri.parse(savedUri)
+        val hasPermission = contentResolver.persistedUriPermissions.any {
+            it.uri == uri && it.isReadPermission && it.isWritePermission
+        }
+        if (!hasPermission) return
+
+        val folder = DocumentFile.fromTreeUri(this, uri)
+        if (folder != null && folder.isDirectory) {
+            rootFolder = folder
+            currentFolder = folder
+            backStack.clear()
+        }
+    }
     private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -518,32 +533,62 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showOptionsDialog() {
-        val labels = arrayOf(
-            "\u67e5\u770b\uff1a\u8be6\u7ec6",
-            "\u67e5\u770b\uff1a\u7d27\u51d1",
-            "\u67e5\u770b\uff1a\u7f51\u683c",
-            "\u6392\u5e8f\uff1a\u540d\u79f0",
-            "\u6392\u5e8f\uff1a\u5927\u5c0f",
-            "\u6392\u5e8f\uff1a\u65e5\u671f",
-            "\u6392\u5e8f\uff1a\u7c7b\u578b",
-            if (descending) "\u987a\u5e8f\uff1a\u5347\u5e8f" else "\u987a\u5e8f\uff1a\u964d\u5e8f"
-        )
-        AlertDialog.Builder(this)
-            .setTitle("\u67e5\u770b\u548c\u6392\u5e8f")
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> viewMode = ViewMode.Detail
-                    1 -> viewMode = ViewMode.Compact
-                    2 -> viewMode = ViewMode.Grid
-                    3 -> sortMode = SortMode.Name
-                    4 -> sortMode = SortMode.Size
-                    5 -> sortMode = SortMode.Date
-                    6 -> sortMode = SortMode.Type
-                    7 -> descending = !descending
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+
+        lateinit var dialog: AlertDialog
+        fun addSection(title: String) {
+            panel.addView(TextView(this).apply {
+                text = title
+                textSize = 14f
+                setTypeface(Typeface.DEFAULT_BOLD)
+                setTextColor(Color.rgb(85, 88, 96))
+                setPadding(0, dp(10), 0, dp(4))
+            })
+        }
+        fun addChoice(label: String, checked: Boolean, action: () -> Unit) {
+            panel.addView(TextView(this).apply {
+                text = if (checked) "\u2713  $label" else "    $label"
+                textSize = 17f
+                setTextColor(if (checked) Color.rgb(45, 80, 180) else Color.rgb(28, 30, 36))
+                setTypeface(Typeface.DEFAULT, if (checked) Typeface.BOLD else Typeface.NORMAL)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                background = rounded(
+                    if (checked) Color.rgb(231, 236, 255) else Color.TRANSPARENT,
+                    if (checked) Color.rgb(122, 145, 220) else Color.TRANSPARENT,
+                    if (checked) 1 else 0,
+                    10
+                )
+                setOnClickListener {
+                    action()
+                    dialog.dismiss()
+                    renderDirectory()
                 }
-                renderDirectory()
-            }
-            .show()
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, dp(3), 0, dp(3))
+            })
+        }
+
+        addSection("\u67e5\u770b")
+        ViewMode.values().forEach { mode ->
+            addChoice(mode.label, viewMode == mode) { viewMode = mode }
+        }
+        addSection("\u6392\u5e8f")
+        SortMode.values().forEach { mode ->
+            addChoice(mode.label, sortMode == mode) { sortMode = mode }
+        }
+        addSection("\u987a\u5e8f")
+        addChoice("\u5347\u5e8f", !descending) { descending = false }
+        addChoice("\u964d\u5e8f", descending) { descending = true }
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("\u67e5\u770b\u548c\u6392\u5e8f")
+            .setView(panel)
+            .setNegativeButton("\u5173\u95ed", null)
+            .create()
+        dialog.show()
     }
 
     private fun normalizeLrcName(value: String, fallback: String): String {
@@ -715,6 +760,10 @@ class MainActivity : ComponentActivity() {
                 return SimpleDateFormat("yyyy/M/d", Locale.getDefault()).format(Date(time))
             }
         }
+    }
+
+    companion object {
+        private const val PREF_TREE_URI = "tree_uri"
     }
 
     private data class ProcessStats(
