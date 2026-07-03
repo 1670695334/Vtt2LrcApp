@@ -1,6 +1,7 @@
 package com.example.vtt2lrc
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -12,200 +13,205 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.documentfile.provider.DocumentFile
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.regex.Pattern
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var titleView: TextView
+    private lateinit var leftButton: Button
+    private lateinit var chooseButton: Button
+    private lateinit var optionButton: Button
     private lateinit var overwriteBox: CheckBox
-    private lateinit var recursiveBox: CheckBox
-    private lateinit var selectAllBox: CheckBox
-    private lateinit var folderButton: Button
-    private lateinit var viewModeButton: Button
-    private lateinit var convertButton: Button
-    private lateinit var folderInfoView: TextView
-    private lateinit var fileCountView: TextView
     private lateinit var listContainer: LinearLayout
-    private lateinit var logView: TextView
+    private lateinit var statusView: TextView
+    private lateinit var bottomBar: LinearLayout
+    private lateinit var bottomText: TextView
+    private lateinit var convertSelectedButton: Button
+    private lateinit var cancelSelectedButton: Button
 
+    private var rootFolder: DocumentFile? = null
     private var currentFolder: DocumentFile? = null
+    private val backStack = mutableListOf<DocumentFile>()
+    private val entries = mutableListOf<FileEntry>()
+    private val selectedKeys = linkedSetOf<String>()
+
     private var viewMode = ViewMode.Detail
-    private val vttItems = mutableListOf<VttItem>()
-    private val selectedUris = linkedSetOf<String>()
+    private var sortMode = SortMode.Name
+    private var descending = false
+    private var selectionMode = false
 
     private val folderPicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode != Activity.RESULT_OK) {
-            appendLog(t("\u5df2\u53d6\u6d88\u9009\u62e9\u3002"))
+            toast("\u5df2\u53d6\u6d88\u9009\u62e9")
             return@registerForActivityResult
         }
 
         val uri = result.data?.data
         if (uri == null) {
-            appendLog(t("\u6ca1\u6709\u83b7\u53d6\u5230\u6587\u4ef6\u5939\u6743\u9650\u3002"))
+            toast("\u6ca1\u6709\u83b7\u53d6\u5230\u6587\u4ef6\u5939\u6743\u9650")
             return@registerForActivityResult
         }
 
         persistTreePermission(uri, result.data?.flags ?: 0)
         val folder = DocumentFile.fromTreeUri(this, uri)
         if (folder == null || !folder.isDirectory) {
-            appendLog(t("\u9009\u62e9\u7684\u4e0d\u662f\u6709\u6548\u6587\u4ef6\u5939\u3002"))
+            toast("\u9009\u62e9\u7684\u4e0d\u662f\u6709\u6548\u6587\u4ef6\u5939")
             return@registerForActivityResult
         }
 
+        rootFolder = folder
         currentFolder = folder
-        scanSelectedFolder()
+        backStack.clear()
+        exitSelectionMode()
+        renderDirectory()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
+        renderDirectory()
+    }
+
+    override fun onBackPressed() {
+        when {
+            selectionMode -> exitSelectionMode()
+            backStack.isNotEmpty() -> {
+                currentFolder = backStack.removeAt(backStack.lastIndex)
+                renderDirectory()
+            }
+            else -> super.onBackPressed()
+        }
     }
 
     private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            setBackgroundColor(Color.WHITE)
+            setPadding(dp(14), dp(12), dp(14), dp(10))
+            setBackgroundColor(Color.rgb(248, 248, 252))
         }
 
-        val title = TextView(this).apply {
-            text = t("VTT \u8f6c LRC")
-            textSize = 26f
-            setTypeface(Typeface.DEFAULT_BOLD)
-            setTextColor(Color.rgb(24, 24, 27))
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
 
-        val summary = TextView(this).apply {
-            text = t("\u5148\u9009\u6587\u4ef6\u5939\u626b\u63cf .vtt\uff0c\u518d\u52fe\u9009\u9700\u8981\u8f6c\u6362\u7684\u6b4c\u8bcd\u6587\u4ef6\u3002\u751f\u6210\u540c\u540d .lrc\uff0cUTF-8 BOM + LF\u3002")
-            textSize = 14f
-            setTextColor(Color.rgb(86, 86, 94))
-            setPadding(0, dp(6), 0, dp(10))
-        }
-
-        folderButton = Button(this).apply {
-            text = t("\u9009\u62e9\u6587\u4ef6\u5939\u5e76\u626b\u63cf")
+        leftButton = Button(this).apply {
+            text = "\u2190"
+            textSize = 22f
             setAllCaps(false)
+            setOnClickListener { handleLeftAction() }
+        }
+
+        titleView = TextView(this).apply {
+            textSize = 24f
+            setTypeface(Typeface.DEFAULT_BOLD)
+            setTextColor(Color.rgb(32, 34, 42))
+            maxLines = 2
+            setPadding(dp(8), 0, dp(8), 0)
+        }
+
+        optionButton = Button(this).apply {
+            text = "\u2630"
+            textSize = 22f
+            setAllCaps(false)
+            setOnClickListener { showOptionsDialog() }
+        }
+
+        topBar.addView(leftButton, LinearLayout.LayoutParams(dp(52), dp(48)))
+        topBar.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        topBar.addView(optionButton, LinearLayout.LayoutParams(dp(52), dp(48)))
+
+        chooseButton = Button(this).apply {
+            text = "\u9009\u62e9\u6587\u4ef6\u5939"
+            setAllCaps(false)
+            textSize = 16f
             setOnClickListener { openFolderPicker() }
         }
 
-        val optionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
         overwriteBox = CheckBox(this).apply {
-            text = t("\u8986\u76d6\u5df2\u6709 LRC")
+            text = "\u8986\u76d6\u5df2\u6709 LRC"
             isChecked = true
-        }
-        recursiveBox = CheckBox(this).apply {
-            text = t("\u5305\u542b\u5b50\u76ee\u5f55")
-            isChecked = true
-            setOnCheckedChangeListener { _, _ -> currentFolder?.let { scanSelectedFolder() } }
+            textSize = 14f
+            setPadding(0, dp(4), 0, dp(4))
         }
 
-        optionRow.addView(overwriteBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        optionRow.addView(recursiveBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        folderInfoView = TextView(this).apply {
-            text = t("\u5c1a\u672a\u9009\u62e9\u6587\u4ef6\u5939")
-            textSize = 15f
-            setTypeface(Typeface.DEFAULT_BOLD)
-            setTextColor(Color.rgb(35, 35, 40))
-            setPadding(0, dp(12), 0, dp(2))
-        }
-
-        fileCountView = TextView(this).apply {
-            text = t("\u8bf7\u5148\u626b\u63cf\u6587\u4ef6\u5939")
+        statusView = TextView(this).apply {
             textSize = 13f
-            setTextColor(Color.rgb(95, 95, 105))
-            setPadding(0, 0, 0, dp(8))
+            setTextColor(Color.rgb(102, 105, 115))
+            setPadding(0, dp(6), 0, dp(8))
         }
-
-        val actionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        selectAllBox = CheckBox(this).apply {
-            text = t("\u5168\u9009")
-            setOnCheckedChangeListener { _, checked ->
-                if (checked) {
-                    selectedUris.clear()
-                    selectedUris.addAll(vttItems.map { it.key })
-                } else if (selectedUris.size == vttItems.size) {
-                    selectedUris.clear()
-                }
-                renderFileList()
-                refreshActions()
-            }
-        }
-
-        viewModeButton = Button(this).apply {
-            text = viewMode.label
-            setAllCaps(false)
-            setOnClickListener { cycleViewMode() }
-        }
-
-        convertButton = Button(this).apply {
-            text = t("\u5f00\u59cb\u8f6c\u6362")
-            isEnabled = false
-            setAllCaps(false)
-            setOnClickListener { convertSelectedFiles() }
-        }
-
-        actionRow.addView(selectAllBox, LinearLayout.LayoutParams(0, dp(46), 1f))
-        actionRow.addView(viewModeButton, LinearLayout.LayoutParams(dp(96), dp(46)))
-        actionRow.addView(convertButton, LinearLayout.LayoutParams(dp(112), dp(46)))
 
         listContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-
         val listScroll = ScrollView(this).apply {
             addView(listContainer)
         }
 
-        val logTitle = TextView(this).apply {
-            text = t("\u8f6c\u6362\u65e5\u5fd7")
-            textSize = 16f
+        bottomBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = rounded(Color.WHITE, Color.rgb(226, 226, 232), 1, 18)
+            visibility = View.GONE
+        }
+
+        bottomText = TextView(this).apply {
+            textSize = 15f
             setTypeface(Typeface.DEFAULT_BOLD)
-            setTextColor(Color.rgb(55, 55, 62))
-            setPadding(0, dp(10), 0, dp(6))
+            setTextColor(Color.rgb(46, 49, 60))
         }
 
-        logView = TextView(this).apply {
-            text = t("\u9009\u62e9\u6587\u4ef6\u5939\u540e\uff0c\u8fd9\u91cc\u4f1a\u663e\u793a\u626b\u63cf\u548c\u8f6c\u6362\u7ed3\u679c\u3002")
-            textSize = 13f
-            setTextColor(Color.rgb(39, 39, 42))
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            background = rounded(Color.rgb(245, 245, 246), Color.TRANSPARENT, 0)
+        convertSelectedButton = Button(this).apply {
+            text = "\u8f6c\u6362"
+            setAllCaps(false)
+            setOnClickListener { convertSelectedFiles() }
         }
 
-        val logScroll = ScrollView(this).apply {
-            addView(logView)
+        cancelSelectedButton = Button(this).apply {
+            text = "\u53d6\u6d88"
+            setAllCaps(false)
+            setOnClickListener { exitSelectionMode() }
         }
 
-        root.addView(title)
-        root.addView(summary)
-        root.addView(folderButton, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
-        root.addView(optionRow)
-        root.addView(folderInfoView)
-        root.addView(fileCountView)
-        root.addView(actionRow)
-        root.addView(listScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.35f))
-        root.addView(logTitle)
-        root.addView(logScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.85f))
+        bottomBar.addView(bottomText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bottomBar.addView(convertSelectedButton, LinearLayout.LayoutParams(dp(92), dp(46)))
+        bottomBar.addView(cancelSelectedButton, LinearLayout.LayoutParams(dp(92), dp(46)))
+
+        root.addView(topBar)
+        root.addView(chooseButton, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+        root.addView(overwriteBox)
+        root.addView(statusView)
+        root.addView(listScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(bottomBar, LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         setContentView(root)
+    }
+
+    private fun handleLeftAction() {
+        when {
+            selectionMode -> exitSelectionMode()
+            backStack.isNotEmpty() -> {
+                currentFolder = backStack.removeAt(backStack.lastIndex)
+                renderDirectory()
+            }
+            else -> openFolderPicker()
+        }
     }
 
     private fun openFolderPicker() {
@@ -225,181 +231,153 @@ class MainActivity : ComponentActivity() {
         val takeFlags = resultFlags and requestedFlags
         try {
             contentResolver.takePersistableUriPermission(uri, if (takeFlags == 0) requestedFlags else takeFlags)
-        } catch (e: SecurityException) {
-            appendLog(t("\u8b66\u544a\uff1a\u65e0\u6cd5\u6301\u4e45\u5316\u6587\u4ef6\u5939\u6743\u9650\uff0c\u672c\u6b21\u4ecd\u4f1a\u5c1d\u8bd5\u8f6c\u6362\u3002"))
+        } catch (_: SecurityException) {
+            toast("\u65e0\u6cd5\u6301\u4e45\u5316\u6743\u9650\uff0c\u672c\u6b21\u4ecd\u53ef\u5c1d\u8bd5\u64cd\u4f5c")
         }
     }
 
-    private fun scanSelectedFolder() {
-        val folder = currentFolder ?: return
-        vttItems.clear()
-        selectedUris.clear()
-        scanFolder(folder, "", vttItems)
-        vttItems.sortWith(compareBy<VttItem> { it.relativeFolder.lowercase() }.thenBy { it.name.lowercase() })
-        selectedUris.addAll(vttItems.map { it.key })
-
-        folderInfoView.text = t("\u5f53\u524d\u6587\u4ef6\u5939\uff1a") + (folder.name ?: t("\u6240\u9009\u6587\u4ef6\u5939"))
-        clearLog()
-        appendLog(t("\u626b\u63cf\u5b8c\u6210\uff1a\u627e\u5230 ") + vttItems.size + t(" \u4e2a VTT \u6587\u4ef6\u3002"))
-        renderFileList()
-        refreshActions()
-    }
-
-    private fun scanFolder(folder: DocumentFile, relativePath: String, output: MutableList<VttItem>) {
-        folder.listFiles().forEach { child ->
-            val name = child.name ?: return@forEach
-            if (child.isDirectory && recursiveBox.isChecked) {
-                val childPath = if (relativePath.isBlank()) name else "$relativePath/$name"
-                scanFolder(child, childPath, output)
-            } else if (child.isFile && name.lowercase().endsWith(".vtt")) {
-                output.add(
-                    VttItem(
-                        file = child,
-                        parentFolder = folder,
-                        name = name,
-                        relativeFolder = relativePath,
-                        size = child.length()
-                    )
-                )
-            }
-        }
-    }
-
-    private fun cycleViewMode() {
-        viewMode = when (viewMode) {
-            ViewMode.Detail -> ViewMode.Compact
-            ViewMode.Compact -> ViewMode.Grid
-            ViewMode.Grid -> ViewMode.Detail
-        }
-        viewModeButton.text = viewMode.label
-        renderFileList()
-    }
-
-    private fun renderFileList() {
+    private fun renderDirectory() {
+        val folder = currentFolder
+        entries.clear()
         listContainer.removeAllViews()
-        selectAllBox.setOnCheckedChangeListener(null)
-        selectAllBox.isChecked = vttItems.isNotEmpty() && selectedUris.size == vttItems.size
-        selectAllBox.setOnCheckedChangeListener { _, checked ->
-            if (checked) {
-                selectedUris.clear()
-                selectedUris.addAll(vttItems.map { it.key })
-            } else if (selectedUris.size == vttItems.size) {
-                selectedUris.clear()
-            }
-            renderFileList()
-            refreshActions()
-        }
 
-        if (vttItems.isEmpty()) {
-            listContainer.addView(emptyView())
+        titleView.text = if (selectionMode) "\u5df2\u9009\u62e9 0 \u9879" else (folder?.name ?: "VTT \u8f6c LRC")
+        leftButton.text = if (selectionMode || backStack.isNotEmpty()) "\u2190" else "+"
+        optionButton.isEnabled = folder != null
+        chooseButton.text = if (folder == null) "\u9009\u62e9\u6587\u4ef6\u5939" else "\u66f4\u6362\u6587\u4ef6\u5939"
+
+        if (folder == null) {
+            statusView.text = "\u8bf7\u9009\u62e9\u4e00\u4e2a\u6587\u4ef6\u5939\uff0c\u7136\u540e\u5728\u76ee\u5f55\u91cc\u70b9\u9009 VTT \u6587\u4ef6\u8fdb\u884c\u8f6c\u6362\u3002"
+            listContainer.addView(emptyHint("\u8fd8\u6ca1\u6709\u9009\u62e9\u6587\u4ef6\u5939"))
+            bottomBar.visibility = View.GONE
             return
         }
 
-        if (viewMode == ViewMode.Grid) {
-            listContainer.addView(gridList())
+        entries.addAll(folder.listFiles().mapNotNull { doc -> FileEntry.from(doc) })
+        sortEntries()
+
+        statusView.text = "${entries.size} \u9879 \u00b7 ${viewMode.label} \u00b7 \u6309${sortMode.label}${if (descending) "\u964d\u5e8f" else "\u5347\u5e8f"}"
+        if (entries.isEmpty()) {
+            listContainer.addView(emptyHint("\u6b64\u76ee\u5f55\u4e3a\u7a7a"))
+        } else if (viewMode == ViewMode.Grid) {
+            listContainer.addView(renderGrid())
         } else {
-            vttItems.forEach { item ->
-                listContainer.addView(fileRow(item, viewMode == ViewMode.Compact))
+            entries.forEach { entry ->
+                listContainer.addView(renderRow(entry, viewMode == ViewMode.Compact))
             }
         }
-        refreshActions()
+        refreshSelectionBar()
     }
 
-    private fun emptyView(): View {
-        return TextView(this).apply {
-            text = t("\u6ca1\u6709\u627e\u5230 .vtt \u6587\u4ef6\u3002\u53ef\u4ee5\u6253\u5f00\u201c\u5305\u542b\u5b50\u76ee\u5f55\u201d\u540e\u91cd\u65b0\u626b\u63cf\u3002")
-            textSize = 14f
-            setTextColor(Color.rgb(108, 108, 116))
-            setPadding(dp(12), dp(18), dp(12), dp(18))
-            gravity = Gravity.CENTER
-        }
+    private fun sortEntries() {
+        val comparator = compareBy<FileEntry> { !it.isDirectory }.then(
+            when (sortMode) {
+                SortMode.Name -> compareBy<FileEntry> { it.name.lowercase(Locale.ROOT) }
+                SortMode.Size -> compareBy<FileEntry> { it.size }
+                SortMode.Date -> compareBy<FileEntry> { it.modified }
+                SortMode.Type -> compareBy<FileEntry> { it.extension }
+            }
+        )
+        entries.sortWith(if (descending) comparator.reversed() else comparator)
     }
 
-    private fun fileRow(item: VttItem, compact: Boolean): View {
+    private fun renderRow(entry: FileEntry, compact: Boolean): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), if (compact) dp(6) else dp(10), dp(10), if (compact) dp(6) else dp(10))
-            background = rounded(Color.WHITE, Color.rgb(225, 226, 230), 1)
-            setOnClickListener { toggleSelection(item) }
+            setPadding(dp(10), if (compact) dp(6) else dp(10), dp(8), if (compact) dp(6) else dp(10))
+            background = rounded(Color.WHITE, Color.rgb(229, 230, 236), 1, 8)
+            setOnClickListener { handleEntryClick(entry) }
+            setOnLongClickListener {
+                handleEntryLongPress(entry)
+                true
+            }
         }
 
-        val box = CheckBox(this).apply {
-            isChecked = selectedUris.contains(item.key)
-            setOnCheckedChangeListener { _, checked -> setSelected(item, checked) }
+        if (selectionMode) {
+            val box = CheckBox(this).apply {
+                isEnabled = entry.isVtt
+                isChecked = selectedKeys.contains(entry.key)
+                setOnCheckedChangeListener { _, checked -> setEntrySelected(entry, checked) }
+            }
+            row.addView(box, LinearLayout.LayoutParams(dp(44), dp(48)))
         }
 
         val icon = TextView(this).apply {
-            text = "VTT"
-            textSize = 12f
-            setTypeface(Typeface.DEFAULT_BOLD)
-            setTextColor(Color.WHITE)
+            text = entry.icon
+            textSize = if (entry.isDirectory) 28f else 18f
             gravity = Gravity.CENTER
-            background = rounded(Color.rgb(88, 104, 170), Color.TRANSPARENT, 0)
+            setTextColor(Color.WHITE)
+            background = rounded(entry.iconColor, Color.TRANSPARENT, 0, 8)
         }
 
         val textColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), 0, 0, 0)
+            setPadding(dp(12), 0, 0, 0)
         }
+
         val nameView = TextView(this).apply {
-            text = item.name
-            textSize = if (compact) 14f else 15f
-            setTextColor(Color.rgb(24, 24, 27))
+            text = entry.name
+            textSize = if (compact) 15f else 17f
+            setTextColor(Color.rgb(22, 24, 30))
             maxLines = if (compact) 1 else 2
         }
+
         val metaView = TextView(this).apply {
-            text = item.subtitle
+            text = entry.meta
             textSize = 12f
-            setTextColor(Color.rgb(111, 111, 119))
+            setTextColor(Color.rgb(112, 115, 125))
             visibility = if (compact) View.GONE else View.VISIBLE
         }
 
         textColumn.addView(nameView)
         textColumn.addView(metaView)
-        row.addView(box, LinearLayout.LayoutParams(dp(46), dp(46)))
-        row.addView(icon, LinearLayout.LayoutParams(dp(42), dp(42)))
+        row.addView(icon, LinearLayout.LayoutParams(dp(54), dp(54)))
         row.addView(textColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
         return withMargins(row, 0, 0, 0, dp(8))
     }
 
-    private fun gridList(): View {
+    private fun renderGrid(): View {
         val grid = GridLayout(this).apply {
-            columnCount = 2
-            useDefaultMargins = false
+            columnCount = 3
         }
-        vttItems.forEach { item ->
+        entries.forEach { entry ->
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(dp(8), dp(8), dp(8), dp(8))
-                background = rounded(Color.WHITE, Color.rgb(225, 226, 230), 1)
-                setOnClickListener { toggleSelection(item) }
+                background = rounded(Color.WHITE, Color.rgb(229, 230, 236), 1, 8)
+                setOnClickListener { handleEntryClick(entry) }
+                setOnLongClickListener {
+                    handleEntryLongPress(entry)
+                    true
+                }
             }
-            val box = CheckBox(this).apply {
-                isChecked = selectedUris.contains(item.key)
-                setOnCheckedChangeListener { _, checked -> setSelected(item, checked) }
+
+            if (selectionMode) {
+                card.addView(CheckBox(this).apply {
+                    isEnabled = entry.isVtt
+                    isChecked = selectedKeys.contains(entry.key)
+                    setOnCheckedChangeListener { _, checked -> setEntrySelected(entry, checked) }
+                }, LinearLayout.LayoutParams(dp(46), dp(36)))
             }
-            val icon = TextView(this).apply {
-                text = "VTT"
-                textSize = 16f
-                setTypeface(Typeface.DEFAULT_BOLD)
-                setTextColor(Color.WHITE)
+
+            card.addView(TextView(this).apply {
+                text = entry.icon
+                textSize = if (entry.isDirectory) 28f else 18f
                 gravity = Gravity.CENTER
-                background = rounded(Color.rgb(88, 104, 170), Color.TRANSPARENT, 0)
-            }
-            val name = TextView(this).apply {
-                text = item.name
-                textSize = 13f
-                setTextColor(Color.rgb(24, 24, 27))
+                setTextColor(Color.WHITE)
+                background = rounded(entry.iconColor, Color.TRANSPARENT, 0, 8)
+            }, LinearLayout.LayoutParams(dp(64), dp(64)))
+
+            card.addView(TextView(this).apply {
+                text = entry.name
+                textSize = 12f
                 gravity = Gravity.CENTER
                 maxLines = 3
+                setTextColor(Color.rgb(30, 32, 38))
                 setPadding(0, dp(8), 0, 0)
-            }
-            card.addView(box, LinearLayout.LayoutParams(dp(48), dp(36)))
-            card.addView(icon, LinearLayout.LayoutParams(dp(64), dp(64)))
-            card.addView(name, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
             val params = GridLayout.LayoutParams().apply {
                 width = 0
@@ -412,90 +390,172 @@ class MainActivity : ComponentActivity() {
         return grid
     }
 
-    private fun toggleSelection(item: VttItem) {
-        setSelected(item, !selectedUris.contains(item.key))
-        renderFileList()
-    }
-
-    private fun setSelected(item: VttItem, selected: Boolean) {
-        if (selected) {
-            selectedUris.add(item.key)
-        } else {
-            selectedUris.remove(item.key)
+    private fun handleEntryClick(entry: FileEntry) {
+        if (selectionMode) {
+            if (entry.isVtt) {
+                setEntrySelected(entry, !selectedKeys.contains(entry.key))
+                renderDirectory()
+            }
+            return
         }
-        refreshActions()
+
+        when {
+            entry.isDirectory -> {
+                currentFolder?.let { backStack.add(it) }
+                currentFolder = entry.file
+                renderDirectory()
+            }
+            entry.isVtt -> showSingleConvertDialog(entry)
+            else -> toast("\u53ea\u652f\u6301\u8f6c\u6362 .vtt \u6587\u4ef6")
+        }
     }
 
-    private fun refreshActions() {
-        val selectedCount = selectedUris.size
-        fileCountView.text = t("\u5171 ") + vttItems.size + t(" \u4e2a VTT\uff0c\u5df2\u9009 ") + selectedCount + t(" \u4e2a")
-        convertButton.isEnabled = selectedCount > 0
+    private fun handleEntryLongPress(entry: FileEntry) {
+        if (!entry.isVtt) {
+            toast("\u957f\u6309\u53ef\u9009\u62e9 VTT \u6587\u4ef6")
+            return
+        }
+        selectionMode = true
+        selectedKeys.clear()
+        selectedKeys.add(entry.key)
+        renderDirectory()
+    }
+
+    private fun setEntrySelected(entry: FileEntry, selected: Boolean) {
+        if (!entry.isVtt) return
+        if (selected) selectedKeys.add(entry.key) else selectedKeys.remove(entry.key)
+        if (selectionMode && selectedKeys.isEmpty()) {
+            exitSelectionMode()
+        } else {
+            refreshSelectionBar()
+        }
+    }
+
+    private fun refreshSelectionBar() {
+        if (!selectionMode) {
+            bottomBar.visibility = View.GONE
+            return
+        }
+        titleView.text = "\u5df2\u9009\u62e9 ${selectedKeys.size} \u9879"
+        bottomText.text = "\u540c\u540d\u8f6c\u6362 ${selectedKeys.size} \u4e2a VTT"
+        convertSelectedButton.isEnabled = selectedKeys.isNotEmpty()
+        bottomBar.visibility = View.VISIBLE
+    }
+
+    private fun exitSelectionMode() {
+        selectionMode = false
+        selectedKeys.clear()
+        renderDirectory()
+    }
+
+    private fun showSingleConvertDialog(entry: FileEntry) {
+        val defaultName = entry.name.replace(Regex("(?i)\\.vtt$"), ".lrc")
+        val input = EditText(this).apply {
+            setText(defaultName)
+            setSelection(0, text.length)
+            hint = "\u8f93\u51fa\u6587\u4ef6\u540d"
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("\u8f6c\u6362\u4e3a LRC")
+            .setMessage("\u53ef\u4fee\u6539\u8f93\u51fa\u6587\u4ef6\u540d\uff0c\u6587\u4ef6\u4f1a\u751f\u6210\u5728\u5f53\u524d\u76ee\u5f55\u3002")
+            .setView(input)
+            .setNegativeButton("\u53d6\u6d88", null)
+            .setPositiveButton("\u8f6c\u6362") { _, _ ->
+                val outputName = normalizeLrcName(input.text?.toString().orEmpty(), defaultName)
+                val stats = ProcessStats(found = 1)
+                convertFile(entry, outputName, stats)
+                toast(if (stats.written == 1) "\u8f6c\u6362\u5b8c\u6210" else "\u8f6c\u6362\u5931\u8d25\u6216\u5df2\u8df3\u8fc7")
+                renderDirectory()
+            }
+            .show()
     }
 
     private fun convertSelectedFiles() {
-        val selectedItems = vttItems.filter { selectedUris.contains(it.key) }
-        val stats = ProcessStats(found = selectedItems.size)
-        clearLog()
-        appendLog(t("\u5f00\u59cb\u8f6c\u6362\uff1a\u5df2\u9009 ") + selectedItems.size + t(" \u4e2a VTT"))
-
-        selectedItems.forEach { item ->
-            convertFile(item, stats)
+        val selectedEntries = entries.filter { selectedKeys.contains(it.key) && it.isVtt }
+        val stats = ProcessStats(found = selectedEntries.size)
+        selectedEntries.forEach { entry ->
+            val outputName = entry.name.replace(Regex("(?i)\\.vtt$"), ".lrc")
+            convertFile(entry, outputName, stats)
         }
-
-        appendLog("")
-        appendLog(
-            t("\u5b8c\u6210\uff1a\u5199\u5165 ") + stats.written +
-                t(" \u4e2a LRC\uff0c\u8df3\u8fc7 ") + stats.skipped +
-                t(" \u4e2a\uff0c\u5931\u8d25 ") + stats.failed + t(" \u4e2a\u3002")
-        )
+        toast("\u5b8c\u6210\uff1a\u5199\u5165 ${stats.written}\uff0c\u8df3\u8fc7 ${stats.skipped}\uff0c\u5931\u8d25 ${stats.failed}")
+        selectionMode = false
+        selectedKeys.clear()
+        renderDirectory()
     }
 
-    private fun convertFile(item: VttItem, stats: ProcessStats) {
-        val lrcName = item.name.replace(Regex("(?i)\\.vtt$"), ".lrc")
-
+    private fun convertFile(entry: FileEntry, outputName: String, stats: ProcessStats) {
         try {
-            val lrcContent = buildLrcContent(item.name, readText(item.file.uri))
+            val lrcContent = buildLrcContent(entry.name, readText(entry.file.uri))
             if (lrcContent == null) {
                 stats.skipped++
-                appendLog(t("\u8df3\u8fc7\uff1a") + item.name + t("\uff0c\u65e0\u6709\u6548\u65f6\u95f4\u8f74\u3002"))
                 return
             }
 
-            val existing = item.parentFolder.findFile(lrcName)
+            val existing = currentFolder?.findFile(outputName)
             if (existing != null) {
                 if (!overwriteBox.isChecked) {
                     stats.skipped++
-                    appendLog(t("\u8df3\u8fc7\uff1a") + lrcName + t(" \u5df2\u5b58\u5728\u3002"))
                     return
                 }
                 if (!existing.delete()) {
                     stats.failed++
-                    appendLog(t("\u5931\u8d25\uff1a\u65e0\u6cd5\u8986\u76d6 ") + lrcName)
                     return
                 }
             }
 
-            val lrcFile = item.parentFolder.createFile("application/octet-stream", lrcName)
+            val lrcFile = currentFolder?.createFile("application/octet-stream", outputName)
             if (lrcFile == null) {
                 stats.failed++
-                appendLog(t("\u5931\u8d25\uff1a\u65e0\u6cd5\u521b\u5efa ") + lrcName)
                 return
             }
 
             writeUtf8BomLf(lrcFile.uri, lrcContent)
             stats.written++
-            appendLog(t("\u5b8c\u6210\uff1a") + item.name + " -> " + lrcName)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             stats.failed++
-            appendLog(t("\u51fa\u9519\uff1a") + item.name + t("\uff0c") + (e.message ?: e.javaClass.simpleName))
         }
+    }
+
+    private fun showOptionsDialog() {
+        val labels = arrayOf(
+            "\u67e5\u770b\uff1a\u8be6\u7ec6",
+            "\u67e5\u770b\uff1a\u7d27\u51d1",
+            "\u67e5\u770b\uff1a\u7f51\u683c",
+            "\u6392\u5e8f\uff1a\u540d\u79f0",
+            "\u6392\u5e8f\uff1a\u5927\u5c0f",
+            "\u6392\u5e8f\uff1a\u65e5\u671f",
+            "\u6392\u5e8f\uff1a\u7c7b\u578b",
+            if (descending) "\u987a\u5e8f\uff1a\u5347\u5e8f" else "\u987a\u5e8f\uff1a\u964d\u5e8f"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("\u67e5\u770b\u548c\u6392\u5e8f")
+            .setItems(labels) { _, which ->
+                when (which) {
+                    0 -> viewMode = ViewMode.Detail
+                    1 -> viewMode = ViewMode.Compact
+                    2 -> viewMode = ViewMode.Grid
+                    3 -> sortMode = SortMode.Name
+                    4 -> sortMode = SortMode.Size
+                    5 -> sortMode = SortMode.Date
+                    6 -> sortMode = SortMode.Type
+                    7 -> descending = !descending
+                }
+                renderDirectory()
+            }
+            .show()
+    }
+
+    private fun normalizeLrcName(value: String, fallback: String): String {
+        val trimmed = value.trim().ifBlank { fallback }
+        return if (trimmed.lowercase(Locale.ROOT).endsWith(".lrc")) trimmed else "$trimmed.lrc"
     }
 
     private fun readText(uri: Uri): String {
         contentResolver.openInputStream(uri)?.use { input ->
             return BufferedReader(InputStreamReader(input, Charsets.UTF_8)).readText()
         }
-        throw IllegalStateException(t("\u65e0\u6cd5\u8bfb\u53d6\u6587\u4ef6"))
+        throw IllegalStateException("\u65e0\u6cd5\u8bfb\u53d6\u6587\u4ef6")
     }
 
     private fun writeUtf8BomLf(uri: Uri, text: String) {
@@ -503,7 +563,7 @@ class MainActivity : ComponentActivity() {
         contentResolver.openOutputStream(uri, "wt")?.use { output ->
             output.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
             output.write(lfText.toByteArray(Charsets.UTF_8))
-        } ?: throw IllegalStateException(t("\u65e0\u6cd5\u5199\u5165\u6587\u4ef6"))
+        } ?: throw IllegalStateException("\u65e0\u6cd5\u5199\u5165\u6587\u4ef6")
     }
 
     private fun buildLrcContent(fileName: String, raw: String): String? {
@@ -515,9 +575,7 @@ class MainActivity : ComponentActivity() {
             .replace(Regex("^\\s*#.*?\\n", RegexOption.MULTILINE), "")
 
         val body = vttToLrc(normalized)
-        if (!Regex("\\[\\d+:\\d{2}\\.\\d{2}]").containsMatchIn(body)) {
-            return null
-        }
+        if (!Regex("\\[\\d+:\\d{2}\\.\\d{2}]").containsMatchIn(body)) return null
 
         val title = fileName.replace(Regex("(?i)\\.vtt$"), "")
         return "[ti:$title]\n[ar:\u672a\u77e5\u6b4c\u624b]\n$body"
@@ -530,28 +588,12 @@ class MainActivity : ComponentActivity() {
             Pattern.DOTALL or Pattern.MULTILINE
         )
         val matcher = pattern.matcher(vttContent)
-        var previousTime = "0:00.00"
-
         while (matcher.find()) {
             val startTime = matcher.group(1) ?: continue
             val lyric = matcher.group(3) ?: ""
-            val lrcStart = convertTime(startTime)
-            if (lrcStart < previousTime) {
-                appendLog(t("\u8b66\u544a\uff1a\u65f6\u95f4\u8f74\u4e71\u5e8f\uff0c") + previousTime + " -> " + lrcStart)
-            }
-            previousTime = lrcStart
-
-            val lyricClean = lyric
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .joinToString("\n")
-
-            if (lyricClean.isNotEmpty()) {
-                lines.add("$lrcStart $lyricClean")
-            }
+            val lyricClean = lyric.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+            if (lyricClean.isNotEmpty()) lines.add("${convertTime(startTime)} $lyricClean")
         }
-
         return lines.joinToString("\n")
     }
 
@@ -566,22 +608,22 @@ class MainActivity : ComponentActivity() {
         return "[$totalMinutes:$sec.$ms]"
     }
 
-    private fun appendLog(message: String) {
-        logView.append(if (logView.text.isNullOrBlank()) message else "\n$message")
+    private fun emptyHint(text: String): View {
+        return TextView(this).apply {
+            this.text = text
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(112, 115, 124))
+            setPadding(dp(16), dp(40), dp(16), dp(40))
+        }
     }
 
-    private fun clearLog() {
-        logView.text = ""
-    }
-
-    private fun rounded(fill: Int, stroke: Int, strokeWidth: Int): GradientDrawable {
+    private fun rounded(fill: Int, stroke: Int, strokeWidth: Int, radius: Int): GradientDrawable {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(8).toFloat()
+            cornerRadius = dp(radius).toFloat()
             setColor(fill)
-            if (strokeWidth > 0) {
-                setStroke(dp(strokeWidth), stroke)
-            }
+            if (strokeWidth > 0) setStroke(dp(strokeWidth), stroke)
         }
     }
 
@@ -589,16 +631,27 @@ class MainActivity : ComponentActivity() {
         view.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(left, top, right, bottom)
-        }
+        ).apply { setMargins(left, top, right, bottom) }
         return view
     }
 
+    private fun toast(text: String) {
+        Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return String.format(Locale.US, "%.1f KB", kb)
+        return String.format(Locale.US, "%.1f MB", kb / 1024.0)
+    }
+
+    private fun formatDate(time: Long): String {
+        if (time <= 0L) return ""
+        return SimpleDateFormat("yyyy/M/d", Locale.getDefault()).format(Date(time))
+    }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    private fun t(value: String): String = value
 
     private enum class ViewMode(val label: String) {
         Detail("\u8be6\u7ec6"),
@@ -606,22 +659,61 @@ class MainActivity : ComponentActivity() {
         Grid("\u7f51\u683c")
     }
 
-    private data class VttItem(
+    private enum class SortMode(val label: String) {
+        Name("\u540d\u79f0"),
+        Size("\u5927\u5c0f"),
+        Date("\u65e5\u671f"),
+        Type("\u7c7b\u578b")
+    }
+
+    private data class FileEntry(
         val file: DocumentFile,
-        val parentFolder: DocumentFile,
         val name: String,
-        val relativeFolder: String,
-        val size: Long
+        val isDirectory: Boolean,
+        val size: Long,
+        val modified: Long
     ) {
         val key: String = file.uri.toString()
-        val subtitle: String
-            get() = listOf(relativeFolder.ifBlank { "." }, formatSize(size)).joinToString("  ")
+        val extension: String = if (isDirectory) "" else name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val isVtt: Boolean = !isDirectory && extension == "vtt"
+        val isLrc: Boolean = !isDirectory && extension == "lrc"
+        val isAudio: Boolean = !isDirectory && extension in setOf("mp3", "flac", "m4a", "wav", "aac")
+        val icon: String
+            get() = when {
+                isDirectory -> "\u2191"
+                isVtt -> "VTT"
+                isLrc -> "LRC"
+                isAudio -> "\u266a"
+                else -> "\u6587"
+            }
+        val iconColor: Int
+            get() = when {
+                isDirectory -> Color.rgb(245, 158, 11)
+                isVtt -> Color.rgb(116, 116, 124)
+                isLrc -> Color.rgb(139, 92, 246)
+                isAudio -> Color.rgb(217, 70, 70)
+                else -> Color.rgb(156, 163, 175)
+            }
+        val meta: String
+            get() = if (isDirectory) "\u6587\u4ef6\u5939" else "${sizeText(size)} \u00b7 ${dateText(modified)}"
 
-        private fun formatSize(bytes: Long): String {
-            if (bytes < 1024) return "$bytes B"
-            val kb = bytes / 1024.0
-            if (kb < 1024) return String.format("%.1f KB", kb)
-            return String.format("%.1f MB", kb / 1024.0)
+        companion object {
+            fun from(file: DocumentFile): FileEntry? {
+                val name = file.name ?: return null
+                return FileEntry(file, name, file.isDirectory, file.length(), file.lastModified())
+            }
+
+            private fun sizeText(bytes: Long): String {
+                if (bytes < 1024) return "$bytes B"
+                val kb = bytes / 1024.0
+                if (kb < 1024) return String.format(Locale.US, "%.1f KB", kb)
+                return String.format(Locale.US, "%.1f MB", kb / 1024.0)
+            }
+
+            private fun dateText(time: Long): String {
+                if (time <= 0L) return ""
+                return SimpleDateFormat("yyyy/M/d", Locale.getDefault()).format(Date(time))
+            }
         }
     }
 
