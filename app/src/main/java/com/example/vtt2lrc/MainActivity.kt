@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
     private var sortMode = SortMode.Name
     private var descending = false
     private var selectionMode = false
+    private val prefs by lazy { getSharedPreferences("settings", 0) }
 
     private val folderPicker = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -75,6 +76,7 @@ class MainActivity : ComponentActivity() {
             return@registerForActivityResult
         }
 
+        prefs.edit().putString(PREF_TREE_URI, uri.toString()).apply()
         rootFolder = folder
         currentFolder = folder
         backStack.clear()
@@ -85,6 +87,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
+        restorePersistedFolder()
         renderDirectory()
     }
 
@@ -199,6 +202,12 @@ class MainActivity : ComponentActivity() {
             setOnClickListener { convertSelectedFiles() }
         }
 
+        deleteSelectedButton = Button(this).apply {
+            text = "\u5220\u9664"
+            setAllCaps(false)
+            setOnClickListener { confirmDeleteSelected() }
+        }
+
         cancelSelectedButton = Button(this).apply {
             text = "\u53d6\u6d88"
             setAllCaps(false)
@@ -206,8 +215,9 @@ class MainActivity : ComponentActivity() {
         }
 
         bottomBar.addView(bottomText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bottomBar.addView(convertSelectedButton, LinearLayout.LayoutParams(dp(92), dp(46)))
-        bottomBar.addView(cancelSelectedButton, LinearLayout.LayoutParams(dp(92), dp(46)))
+        bottomBar.addView(convertSelectedButton, LinearLayout.LayoutParams(dp(82), dp(46)))
+        bottomBar.addView(deleteSelectedButton, LinearLayout.LayoutParams(dp(82), dp(46)))
+        bottomBar.addView(cancelSelectedButton, LinearLayout.LayoutParams(dp(82), dp(46)))
 
         root.addView(topBar)
         root.addView(chooseButton, LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
@@ -311,7 +321,6 @@ class MainActivity : ComponentActivity() {
 
         if (selectionMode) {
             val box = CheckBox(this).apply {
-                isEnabled = entry.isVtt
                 isChecked = selectedKeys.contains(entry.key)
                 setOnCheckedChangeListener { _, checked -> setEntrySelected(entry, checked) }
             }
@@ -371,8 +380,7 @@ class MainActivity : ComponentActivity() {
 
             if (selectionMode) {
                 card.addView(CheckBox(this).apply {
-                    isEnabled = entry.isVtt
-                    isChecked = selectedKeys.contains(entry.key)
+                isChecked = selectedKeys.contains(entry.key)
                     setOnCheckedChangeListener { _, checked -> setEntrySelected(entry, checked) }
                 }, LinearLayout.LayoutParams(dp(46), dp(36)))
             }
@@ -407,10 +415,8 @@ class MainActivity : ComponentActivity() {
 
     private fun handleEntryClick(entry: FileEntry) {
         if (selectionMode) {
-            if (entry.isVtt) {
-                setEntrySelected(entry, !selectedKeys.contains(entry.key))
-                renderDirectory()
-            }
+            setEntrySelected(entry, !selectedKeys.contains(entry.key))
+            renderDirectory()
             return
         }
 
@@ -426,10 +432,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleEntryLongPress(entry: FileEntry) {
-        if (!entry.isVtt) {
-            toast("\u957f\u6309\u53ef\u9009\u62e9 VTT \u6587\u4ef6")
-            return
-        }
         selectionMode = true
         selectedKeys.clear()
         selectedKeys.add(entry.key)
@@ -437,7 +439,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setEntrySelected(entry: FileEntry, selected: Boolean) {
-        if (!entry.isVtt) return
         if (selected) selectedKeys.add(entry.key) else selectedKeys.remove(entry.key)
         if (selectionMode && selectedKeys.isEmpty()) {
             exitSelectionMode()
@@ -452,8 +453,9 @@ class MainActivity : ComponentActivity() {
             return
         }
         titleView.text = "\u5df2\u9009\u62e9 ${selectedKeys.size} \u9879"
-        bottomText.text = "\u540c\u540d\u8f6c\u6362 ${selectedKeys.size} \u4e2a VTT"
+        bottomText.text = "\u5df2\u9009\u62e9 ${selectedKeys.size} \u9879"
         convertSelectedButton.isEnabled = selectedKeys.isNotEmpty()
+        deleteSelectedButton.isEnabled = selectedKeys.isNotEmpty()
         bottomBar.visibility = View.VISIBLE
     }
 
@@ -463,6 +465,27 @@ class MainActivity : ComponentActivity() {
         renderDirectory()
     }
 
+    private fun confirmDeleteSelected() {
+        val selectedEntries = entries.filter { selectedKeys.contains(it.key) }
+        if (selectedEntries.isEmpty()) return
+
+        AlertDialog.Builder(this)
+            .setTitle("\u5220\u9664\u9009\u4e2d\u9879")
+            .setMessage("\u786e\u5b9a\u5220\u9664 ${selectedEntries.size} \u9879\u5417\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u64a4\u9500\u3002")
+            .setNegativeButton("\u53d6\u6d88", null)
+            .setPositiveButton("\u5220\u9664") { _, _ ->
+                var deleted = 0
+                var failed = 0
+                selectedEntries.forEach { entry ->
+                    if (entry.file.delete()) deleted++ else failed++
+                }
+                toast("\u5220\u9664\u5b8c\u6210\uff1a${deleted}\uff0c\u5931\u8d25\uff1a${failed}")
+                selectionMode = false
+                selectedKeys.clear()
+                renderDirectory()
+            }
+            .show()
+    }
     private fun showSingleConvertDialog(entry: FileEntry) {
         val defaultName = entry.name.replace(Regex("(?i)\\.vtt$"), ".lrc")
         val input = EditText(this).apply {
