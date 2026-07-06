@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var bottomBar: LinearLayout
     private lateinit var bottomText: TextView
     private lateinit var convertSelectedButton: Button
+    private lateinit var deleteSelectedButton: Button
     private lateinit var cancelSelectedButton: Button
 
     private var rootFolder: DocumentFile? = null
