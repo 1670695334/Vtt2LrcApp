@@ -1,26 +1,74 @@
-Vtt2LrcApp
-一款适配 Android 8 及以上系统的安卓应用，用于将 WebVTT（.vtt）歌词 / 字幕文件转换为 LRC（.lrc）歌词文件，适配网易云音乐本地滚动歌词功能。
-功能特性
-基于安卓存储访问框架 SAF（ACTION_OPEN_DOCUMENT_TREE）选择目标文件夹
-支持开启递归扫描，检索文件夹内全部 .vtt 文件
-在每一个 vtt 文件所在目录，生成同名 lrc 文件
-默认覆盖已存在的同名 lrc 文件
-输出文件采用带 BOM 的 UTF-8 编码，换行符为 LF
-自动写入歌词头部标签：[ti:文件名]、[ar:未知歌手]；歌手栏中文会按照转换规则转为 Unicode 转义字符
-时间戳转换：将 00:00:01.500 --> 00:00:05.000 格式时间轴，转换为标准 [0:01.50] 歌词内容 LRC 格式
-使用 GitHub Actions 自动打包
-将项目推送至 GitHub 仓库
-打开仓库的 Actions 标签页
-手动执行 Android APK 工作流，或提交代码自动触发打包流程
-下载打包产物 app-debug
-解压产物，使用其中的 app-debug.apk 安装包
-本地编译打包
-本地已安装配置 Gradle 时，执行如下命令：
-bash
-运行
+# Vtt2LrcApp
+
+一个 Android 8+ 本地工具，用来把 WebVTT（`.vtt`）歌词/字幕文件转换成 LRC（`.lrc`）歌词文件，方便网易云音乐本地歌词滚动识别。
+
+## 功能
+
+- 使用 Android SAF（`ACTION_OPEN_DOCUMENT_TREE`）选择并授权文件夹。
+- 首次授权后会持久化保存权限，下次打开 App 会自动进入上次授权的目录。
+- App 内置目录浏览界面，支持进入子目录和返回上级目录。
+- 默认详细单列展示，也支持切换为紧凑、网格布局。
+- 支持按名称、大小、日期、类型排序，并可切换升序/降序。
+- 单击 `.vtt` 文件会弹出确认转换窗口，可修改输出 `.lrc` 文件名。
+- 长按任意文件进入多选模式。
+- 多选转换时只转换选中的 `.vtt` 文件，默认生成同名 `.lrc`。
+- 多选删除时不限制文件类型，选中什么就删除什么，会先弹窗确认。
+- 默认覆盖已有 `.lrc` 文件。
+- 输出 `.lrc` 使用 UTF-8 with BOM 编码，LF 换行。
+- 生成头部：
+
+```text
+[ti:文件名]
+[ar:未知歌手]
+```
+
+## 转换规则
+
+示例 VTT：
+
+```text
+00:00:01.500 --> 00:00:05.000
+歌词
+```
+
+转换为 LRC：
+
+```text
+[0:01.50] 歌词
+```
+
+## 权限说明
+
+本项目不申请 `MANAGE_EXTERNAL_STORAGE`。普通 Android App 无法静默获取整个文件系统权限，必须通过系统文件夹选择器由用户点一次“使用此文件夹”授权。
+
+授权成功后，App 会保存这个目录的持久化权限；只要系统没有撤销权限，下次打开 App 会直接进入上次目录，不需要重复授权。
+
+## GitHub Actions 打包 APK
+
+1. 推送代码到 GitHub。
+2. 打开仓库的 `Actions` 页面。
+3. 等待 `Android APK` 工作流执行完成。
+4. 如果构建结果是绿色对勾，点进最新运行记录。
+5. 在页面底部 `Artifacts` 下载 `app-debug`。
+6. 解压后得到 `app-debug.apk`，安装到安卓手机即可。
+
+## 本地构建
+
+如果本机已安装 Gradle：
+
+```bash
 gradle assembleDebug
-编译生成的 APK 文件路径：
-text
+```
+
+生成位置：
+
+```text
 app/build/outputs/apk/debug/app-debug.apk
-注意事项
-本应用不会申请 MANAGE_EXTERNAL_STORAGE 全部文件管理权限，完全依靠 SAF 文件夹授权实现文件读写，兼容 Android 8 及以上系统的新版存储权限机制。
+```
+
+## 技术栈
+
+- Kotlin
+- AndroidX
+- DocumentFile / SAF
+- GitHub Actions
