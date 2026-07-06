@@ -1,39 +1,26 @@
-# Vtt2LrcApp
-
-An Android 8+ app that converts WebVTT (`.vtt`) lyric/subtitle files to LRC (`.lrc`) files for local lyric scrolling in NetEase Cloud Music.
-
-## Features
-
-- Pick a folder with Android SAF (`ACTION_OPEN_DOCUMENT_TREE`).
-- Recursively find `.vtt` files when enabled.
-- Write same-name `.lrc` files in each `.vtt` file's own folder.
-- Overwrite existing `.lrc` files by default.
-- Output LRC as UTF-8 with BOM and LF line endings.
-- Add `[ti:file name]` and `[ar:unknown singer]` headers. The app writes the artist value as Unicode escapes for the Chinese text required by the conversion rule.
-- Convert timestamps like `00:00:01.500 --> 00:00:05.000` to `[0:01.50] lyric`.
-
-## Build With GitHub Actions
-
-1. Push this project to GitHub.
-2. Open the repository's `Actions` tab.
-3. Run the `Android APK` workflow, or push a commit to trigger it.
-4. Download the `app-debug` artifact.
-5. Inside the artifact, use `app-debug.apk`.
-
-## Local Build
-
-If Gradle is installed locally:
-
-```bash
+Vtt2LrcApp
+一款适配 Android 8 及以上系统的安卓应用，用于将 WebVTT（.vtt）歌词 / 字幕文件转换为 LRC（.lrc）歌词文件，适配网易云音乐本地滚动歌词功能。
+功能特性
+基于安卓存储访问框架 SAF（ACTION_OPEN_DOCUMENT_TREE）选择目标文件夹
+支持开启递归扫描，检索文件夹内全部 .vtt 文件
+在每一个 vtt 文件所在目录，生成同名 lrc 文件
+默认覆盖已存在的同名 lrc 文件
+输出文件采用带 BOM 的 UTF-8 编码，换行符为 LF
+自动写入歌词头部标签：[ti:文件名]、[ar:未知歌手]；歌手栏中文会按照转换规则转为 Unicode 转义字符
+时间戳转换：将 00:00:01.500 --> 00:00:05.000 格式时间轴，转换为标准 [0:01.50] 歌词内容 LRC 格式
+使用 GitHub Actions 自动打包
+将项目推送至 GitHub 仓库
+打开仓库的 Actions 标签页
+手动执行 Android APK 工作流，或提交代码自动触发打包流程
+下载打包产物 app-debug
+解压产物，使用其中的 app-debug.apk 安装包
+本地编译打包
+本地已安装配置 Gradle 时，执行如下命令：
+bash
+运行
 gradle assembleDebug
-```
-
-The APK is generated at:
-
-```text
+编译生成的 APK 文件路径：
+text
 app/build/outputs/apk/debug/app-debug.apk
-```
-
-## Notes
-
-This app does not request `MANAGE_EXTERNAL_STORAGE`. It relies on SAF folder permissions, which is the compatible approach for Android 8+ and modern Android storage behavior.
+注意事项
+本应用不会申请 MANAGE_EXTERNAL_STORAGE 全部文件管理权限，完全依靠 SAF 文件夹授权实现文件读写，兼容 Android 8 及以上系统的新版存储权限机制。
